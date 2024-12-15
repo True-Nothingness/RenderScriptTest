@@ -26,7 +26,7 @@
                 android:id="@+id/outputRS"
                 android:layout_width="300dp"
                 android:layout_height="250dp"
-                android:layout_marginTop="10dp"
+                android:layout_marginTop="40dp"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@+id/inputImage" />
 
@@ -34,47 +34,50 @@
                 android:id="@+id/outputJava"
                 android:layout_width="300dp"
                 android:layout_height="250dp"
-                android:layout_marginTop="10dp"
+                android:layout_marginTop="40dp"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@+id/outputRS" />
 
-            <ImageView
-                android:id="@+id/outputVulkan"
+            <com.light.renderscripttest.MyGLSurfaceView
+                android:id="@+id/outputGL"
                 android:layout_width="300dp"
                 android:layout_height="250dp"
-                android:layout_marginTop="10dp"
+                android:layout_marginTop="40dp"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@+id/outputJava" />
 
 
             <TextView
                 android:id="@+id/timeRS"
-                android:layout_width="100dp"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="69dp"
+                android:layout_marginTop="5dp"
                 android:text="Time RS"
                 android:textSize="20sp"
-                app:layout_constraintStart_toEndOf="@+id/outputRS"
+                android:maxLines="1"
+                app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@+id/inputImage" />
 
             <TextView
                 android:id="@+id/timeJava"
-                android:layout_width="100dp"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="69dp"
+                android:layout_marginTop="5dp"
                 android:text="Time Java"
                 android:textSize="20sp"
-                app:layout_constraintStart_toEndOf="@+id/outputJava"
+                android:maxLines="1"
+                app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@+id/outputRS" />
 
             <TextView
-                android:id="@+id/timeVulkan"
-                android:layout_width="100dp"
+                android:id="@+id/timeGL"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="69dp"
-                android:text="Time Vulkan"
+                android:layout_marginTop="5dp"
+                android:text="Time OpenGL"
                 android:textSize="20sp"
-                app:layout_constraintStart_toEndOf="@+id/outputVulkan"
+                android:maxLines="1"
+                app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@+id/outputJava" />
 
         </androidx.constraintlayout.widget.ConstraintLayout>

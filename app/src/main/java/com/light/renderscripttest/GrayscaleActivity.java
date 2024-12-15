@@ -6,8 +6,11 @@ import android.graphics.BitmapFactory;
 import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
 import android.graphics.RenderEffect;
+import android.opengl.GLES32;
+import android.opengl.GLSurfaceView;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.Log;
 import android.widget.ImageView;
 import android.widget.TextView;
 
@@ -19,9 +22,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class GrayscaleActivity extends AppCompatActivity {
-    private Bitmap mBitmapIn, mBitmapOutRS, mBitmapOutJava, mBitmapOutVulkan;
+    private Bitmap mBitmapIn, mBitmapOutRS, mBitmapOutJava;
     private ExecutorService executorService = Executors.newSingleThreadExecutor();
-    public long timeJava, timeRS, timeVulkan;
+    private MyGLSurfaceView glSurfaceView;
+    public long timeJava, timeRS, timeGL;
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -46,10 +50,15 @@ public class GrayscaleActivity extends AppCompatActivity {
         int h = mBitmapIn.getHeight();
         mBitmapOutRS = Bitmap.createBitmap(w, h, mBitmapIn.getConfig());
         mBitmapOutJava = Bitmap.createBitmap(w, h, mBitmapIn.getConfig());
-        mBitmapOutVulkan = Bitmap.createBitmap(w, h, mBitmapIn.getConfig());
         TextView timeViewJava = findViewById(R.id.timeJava);
         TextView timeViewRS = findViewById(R.id.timeRS);
-        TextView timeViewVulkan = findViewById(R.id.timeVulkan);
+        glSurfaceView = findViewById(R.id.outputGL);
+        long startTime = System.nanoTime();
+        glSurfaceView.setRenderer(new MyGLRenderer(this, mBitmapIn, 0));
+        long endTime = System.nanoTime();
+        timeGL = (endTime - startTime)/1000;
+        TextView timeViewGL = findViewById(R.id.timeGL);
+        timeViewGL.setText("Time GL: " + timeGL + " μs");
         ImageView in = findViewById(R.id.inputImage);
         in.setImageBitmap(mBitmapIn);
         ImageView render = findViewById(R.id.outputRender);
@@ -58,23 +67,38 @@ public class GrayscaleActivity extends AppCompatActivity {
         executorService.execute(new Runnable() {
             @Override
             public void run() {
+                // Apply Java grayscale
                 applyGrayscaleJava();
-                applyGrayscaleRS();
-                // Post UI updates to main thread
+
+                // Once done, call the UI update method to set the result
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        // Update UI after background tasks finish
                         ImageView outputJava = findViewById(R.id.outputJava);
                         outputJava.setImageBitmap(mBitmapOutJava);
-                        ImageView outputRS = findViewById(R.id.outputRS);
-                        outputRS.setImageBitmap(mBitmapOutRS);
-                        timeViewJava.setText("Time Java:\n" + timeJava + " μs");
-                        timeViewRS.setText("Time RS:\n" + timeRS + " μs");
+                        timeViewJava.setText("Time Java: " + timeJava + " μs");
                     }
                 });
             }
         });
+        executorService.execute(new Runnable() {
+            @Override
+            public void run() {
+                // Apply RenderScript grayscale
+                applyGrayscaleRS();
+
+                // Once done, call the UI update method to set the result
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        ImageView outputRS = findViewById(R.id.outputRS);
+                        outputRS.setImageBitmap(mBitmapOutRS);
+                        timeViewRS.setText("Time RS: " + timeRS + " μs");
+                    }
+                });
+            }
+        });
+
     }
     private Bitmap loadBitmap(int resource) {
         final BitmapFactory.Options options = new BitmapFactory.Options();
@@ -121,7 +145,7 @@ public class GrayscaleActivity extends AppCompatActivity {
         long endTime = System.nanoTime();
         long duration = (endTime - startTime)/1000;
         TextView timeRender = findViewById(R.id.timeRender);
-        timeRender.setText("Time Render:\n" + duration + " μs");
+        timeRender.setText("Time Render: " + duration + " μs");
     }
 
     private void applyGrayscaleRS() {

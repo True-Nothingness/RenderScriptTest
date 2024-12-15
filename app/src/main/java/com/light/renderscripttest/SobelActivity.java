@@ -4,7 +4,9 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.opengl.GLSurfaceView;
 import android.os.Bundle;
+import android.util.Log;
 import android.widget.ImageView;
 import android.widget.TextView;
 
@@ -21,9 +23,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class SobelActivity extends AppCompatActivity {
-    private Bitmap mBitmapIn, mBitmapOutRS, mBitmapOutJava, mBitmapOutVulkan;
+    private Bitmap mBitmapIn, mBitmapOutRS, mBitmapOutJava;
     private ExecutorService executorService = Executors.newSingleThreadExecutor();
-    public long timeJava, timeRS, timeVulkan;
+    private MyGLSurfaceView glSurfaceView;
+    public long timeJava, timeRS, timeGL;
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -48,28 +51,47 @@ public class SobelActivity extends AppCompatActivity {
         int h = mBitmapIn.getHeight();
         mBitmapOutRS = Bitmap.createBitmap(w, h, mBitmapIn.getConfig());
         mBitmapOutJava = Bitmap.createBitmap(w, h, mBitmapIn.getConfig());
-        mBitmapOutVulkan = Bitmap.createBitmap(w, h, mBitmapIn.getConfig());
         TextView timeViewJava = findViewById(R.id.timeJava);
         TextView timeViewRS = findViewById(R.id.timeRS);
-        TextView timeViewVulkan = findViewById(R.id.timeVulkan);
+        glSurfaceView = findViewById(R.id.outputGL);
+        long startTime = System.nanoTime();
+        glSurfaceView.setRenderer(new MyGLRenderer(this, mBitmapIn, 2));
+        long endTime = System.nanoTime();
+        timeGL = (endTime - startTime)/1000;
+        TextView timeViewGL = findViewById(R.id.timeGL);
+        timeViewGL.setText("Time GL: " + timeGL + " μs");
         ImageView in = findViewById(R.id.inputImage);
         in.setImageBitmap(mBitmapIn);
         executorService.execute(new Runnable() {
             @Override
             public void run() {
+                // Apply Java grayscale
                 applySobelJava();
-                applySobelRS();
-                // Post UI updates to main thread
+
+                // Once done, call the UI update method to set the result
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        // Update UI after background tasks finish
                         ImageView outputJava = findViewById(R.id.outputJava);
                         outputJava.setImageBitmap(mBitmapOutJava);
+                        timeViewJava.setText("Time Java: " + timeJava + " μs");
+                    }
+                });
+            }
+        });
+        executorService.execute(new Runnable() {
+            @Override
+            public void run() {
+                // Apply RenderScript grayscale
+                applySobelRS();
+
+                // Once done, call the UI update method to set the result
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
                         ImageView outputRS = findViewById(R.id.outputRS);
                         outputRS.setImageBitmap(mBitmapOutRS);
-                        timeViewJava.setText("Time Java:\n" + timeJava + " μs");
-                        timeViewRS.setText("Time RS:\n" + timeRS + " μs");
+                        timeViewRS.setText("Time RS: " + timeRS + " μs");
                     }
                 });
             }
@@ -158,5 +180,4 @@ public class SobelActivity extends AppCompatActivity {
         // Destroy the RenderScript context to release resources
         rs.destroy();
     }
-
 }

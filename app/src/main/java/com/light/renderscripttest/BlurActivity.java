@@ -25,11 +25,13 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class BlurActivity extends AppCompatActivity {
-    private Bitmap mBitmapIn, mBitmapOutRS, mBitmapOutJava, mBitmapOutVulkan;
+    private Bitmap mBitmapIn, mBitmapOutRS, mBitmapOutJava;
     private ExecutorService executorService = Executors.newSingleThreadExecutor();
-    public long timeJava, timeRS, timeVulkan;
+    private MyGLSurfaceView glSurfaceView;
+    public long timeJava, timeRS, timeGL;
     public int javaRadius, rsRadius;
     public float javaSigma;
+    public float buffer;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -43,34 +45,43 @@ public class BlurActivity extends AppCompatActivity {
                 javaSigma = 3.3f;
                 javaRadius = 10;
                 rsRadius = 10;
+                buffer = 1.5f;
                 break;
             case 640:
                 mBitmapIn = loadBitmap(R.drawable.i640x480);
                 javaSigma = 5.3f;
                 javaRadius = 15;
                 rsRadius = 15;
+                buffer = 2.0f;
                 break;
             case 1024:
                 mBitmapIn = loadBitmap(R.drawable.i1024x1024);
                 javaSigma = 9.3f;
                 javaRadius = 22;
                 rsRadius = 22;
+                buffer = 3.0f;
                 break;
             case 1920:
                 mBitmapIn = loadBitmap(R.drawable.i1920x1080);
                 javaSigma = 16.3f;
                 javaRadius = 25;
                 rsRadius = 25;
+                buffer = 4.0f;
                 break;
         }
         int w = mBitmapIn.getWidth();
         int h = mBitmapIn.getHeight();
         mBitmapOutRS = Bitmap.createBitmap(w, h, mBitmapIn.getConfig());
         mBitmapOutJava = Bitmap.createBitmap(w, h, mBitmapIn.getConfig());
-        mBitmapOutVulkan = Bitmap.createBitmap(w, h, mBitmapIn.getConfig());
         TextView timeViewJava = findViewById(R.id.timeJava);
         TextView timeViewRS = findViewById(R.id.timeRS);
-        TextView timeViewVulkan = findViewById(R.id.timeVulkan);
+        glSurfaceView = findViewById(R.id.outputGL);
+        long startTime = System.nanoTime();
+        glSurfaceView.setRenderer(new MyGLRenderer(this, mBitmapIn, 1, buffer));
+        long endTime = System.nanoTime();
+        timeGL = (endTime - startTime)/1000;
+        TextView timeViewGL = findViewById(R.id.timeGL);
+        timeViewGL.setText("Time GL: " + timeGL + " μs");
         ImageView in = findViewById(R.id.inputImage);
         in.setImageBitmap(mBitmapIn);
         ImageView render = findViewById(R.id.outputRender);
@@ -79,19 +90,33 @@ public class BlurActivity extends AppCompatActivity {
         executorService.execute(new Runnable() {
             @Override
             public void run() {
+                // Apply Java grayscale
                 applyGaussianBlurJava();
-                applyGaussianBlurRS();
-                // Post UI updates to main thread
+
+                // Once done, call the UI update method to set the result
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        // Update UI after background tasks finish
                         ImageView outputJava = findViewById(R.id.outputJava);
                         outputJava.setImageBitmap(mBitmapOutJava);
+                        timeViewJava.setText("Time Java: " + timeJava + " μs");
+                    }
+                });
+            }
+        });
+        executorService.execute(new Runnable() {
+            @Override
+            public void run() {
+                // Apply RenderScript grayscale
+                applyGaussianBlurRS();
+
+                // Once done, call the UI update method to set the result
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
                         ImageView outputRS = findViewById(R.id.outputRS);
                         outputRS.setImageBitmap(mBitmapOutRS);
-                        timeViewJava.setText("Time Java:\n" + timeJava + " μs");
-                        timeViewRS.setText("Time RS:\n" + timeRS + " μs");
+                        timeViewRS.setText("Time RS: " + timeRS + " μs");
                     }
                 });
             }
@@ -119,7 +144,7 @@ public class BlurActivity extends AppCompatActivity {
         long endTime = System.nanoTime();
         long duration = (endTime - startTime)/1000;
         TextView timeRender = findViewById(R.id.timeRender);
-        timeRender.setText("Time Render:\n" + duration + " μs");
+        timeRender.setText("Time Render: " + duration + " μs");
     }
     private void applyGaussianBlurRS() {
         long startTime = System.nanoTime();

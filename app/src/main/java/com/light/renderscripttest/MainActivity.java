@@ -1,6 +1,9 @@
 package com.light.renderscripttest;
 
+import android.app.ActivityManager;
+import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ConfigurationInfo;
 import android.os.Bundle;
 import android.widget.TextView;
 
@@ -19,6 +22,12 @@ public class MainActivity extends AppCompatActivity {
         Intent intent1 = new Intent(this, GrayscaleActivity.class);
         Intent intent2 = new Intent(this, BlurActivity.class);
         Intent intent3 = new Intent(this, SobelActivity.class);
+        ActivityManager activityManager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        ConfigurationInfo configInfo = activityManager.getDeviceConfigurationInfo();
+        boolean supportsEs32 = configInfo.reqGlEsVersion >= 0x30002;
+        if (!supportsEs32) {
+            throw new UnsupportedOperationException("OpenGL ES 3.2 is not supported.");
+        }
         textView.setOnClickListener(v -> showOptions(intent1));
         textView2.setOnClickListener(v -> showOptions(intent2));
         textView3.setOnClickListener(v -> showOptions(intent3));
