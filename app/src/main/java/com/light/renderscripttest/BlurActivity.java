@@ -3,19 +3,15 @@ package com.light.renderscripttest;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Color;
 import android.graphics.RenderEffect;
 import android.graphics.Shader;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.Choreographer;
 import android.widget.ImageView;
 import android.widget.TextView;
 
-import androidx.activity.EdgeToEdge;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.graphics.Insets;
-import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowInsetsCompat;
 import androidx.renderscript.Allocation;
 import androidx.renderscript.Element;
 import androidx.renderscript.RenderScript;
@@ -32,6 +28,10 @@ public class BlurActivity extends AppCompatActivity {
     public int javaRadius, rsRadius;
     public float javaSigma;
     public float buffer;
+    private RenderScript mRS;
+    private Allocation inAllocation, outAllocation;
+    private ScriptIntrinsicBlur blurScript;
+    private GaussianBlur gaussianBlur;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -71,56 +71,58 @@ public class BlurActivity extends AppCompatActivity {
         }
         int w = mBitmapIn.getWidth();
         int h = mBitmapIn.getHeight();
+        gaussianBlur = new GaussianBlur(javaRadius, javaSigma);
+        ImageView in = findViewById(R.id.inputImage);
+        in.setImageBitmap(mBitmapIn);
         mBitmapOutRS = Bitmap.createBitmap(w, h, mBitmapIn.getConfig());
         mBitmapOutJava = Bitmap.createBitmap(w, h, mBitmapIn.getConfig());
+
         TextView timeViewJava = findViewById(R.id.timeJava);
         TextView timeViewRS = findViewById(R.id.timeRS);
         glSurfaceView = findViewById(R.id.outputGL);
-        long startTime = System.nanoTime();
-        glSurfaceView.setRenderer(new MyGLRenderer(this, mBitmapIn, 1, buffer));
-        long endTime = System.nanoTime();
-        timeGL = (endTime - startTime)/1000;
-        TextView timeViewGL = findViewById(R.id.timeGL);
-        timeViewGL.setText("Time GL: " + timeGL + " μs");
-        ImageView in = findViewById(R.id.inputImage);
-        in.setImageBitmap(mBitmapIn);
+
+        // Initialize RenderScript
+        mRS = RenderScript.create(this);
+
+        // Create input and output allocations
+        inAllocation = Allocation.createFromBitmap(mRS, mBitmapIn, Allocation.MipmapControl.MIPMAP_NONE, Allocation.USAGE_SCRIPT);
+        outAllocation = Allocation.createTyped(mRS, inAllocation.getType());
+
+        // Create an intrinsic blur script
+        blurScript = ScriptIntrinsicBlur.create(mRS, Element.U8_4(mRS));
+        blurScript.setRadius(rsRadius); // Set desired blur radius
+
+        // Benchmark GLSurfaceView rendering
+        benchmarkGLRendering();
+
+        // Apply RenderEffect
         ImageView render = findViewById(R.id.outputRender);
         render.setImageBitmap(mBitmapIn);
         applyGaussianBlurEffect(render, 5, 5);
-        executorService.execute(new Runnable() {
-            @Override
-            public void run() {
-                // Apply Java grayscale
-                applyGaussianBlurJava();
 
-                // Once done, call the UI update method to set the result
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        ImageView outputJava = findViewById(R.id.outputJava);
-                        outputJava.setImageBitmap(mBitmapOutJava);
-                        timeViewJava.setText("Time Java: " + timeJava + " μs");
-                    }
-                });
-            }
+        // Benchmark Java blur
+        executorService.execute(() -> {
+            applyGaussianBlurJava();
+            runOnUiThread(() -> {
+                ImageView outputJava = findViewById(R.id.outputJava);
+                outputJava.setImageBitmap(mBitmapOutJava);
+                timeViewJava.setText("Time Java: " + timeJava + " μs");
+            });
         });
-        executorService.execute(new Runnable() {
-            @Override
-            public void run() {
-                // Apply RenderScript grayscale
-                applyGaussianBlurRS();
 
-                // Once done, call the UI update method to set the result
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        ImageView outputRS = findViewById(R.id.outputRS);
-                        outputRS.setImageBitmap(mBitmapOutRS);
-                        timeViewRS.setText("Time RS: " + timeRS + " μs");
-                    }
-                });
-            }
+        // Benchmark RenderScript blur
+        executorService.execute(() -> {
+            applyGaussianBlurRS();
+            runOnUiThread(() -> {
+                ImageView outputRS = findViewById(R.id.outputRS);
+                outputRS.setImageBitmap(mBitmapOutRS);
+                timeViewRS.setText("Time RS: " + timeRS + " μs");
+            });
         });
+    }
+    private void warmUp() {
+        applyGaussianBlurJava();
+        applyGaussianBlurRS();
     }
     private Bitmap loadBitmap(int resource) {
         final BitmapFactory.Options options = new BitmapFactory.Options();
@@ -129,36 +131,35 @@ public class BlurActivity extends AppCompatActivity {
     }
     private void applyGaussianBlurJava() {
         long startTime = System.nanoTime();
-        mBitmapOutJava = GaussianBlur.applyGaussianBlur(mBitmapIn, javaRadius, javaSigma);
+        mBitmapOutJava = gaussianBlur.applyGaussianBlur(mBitmapIn);
         long endTime = System.nanoTime();
         timeJava = (endTime - startTime)/1000;
     }
 
     private void applyGaussianBlurEffect(ImageView imageView, float blurRadiusX, float blurRadiusY) {
-        long startTime = System.nanoTime();
-        RenderEffect blurEffect = null;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            blurEffect = RenderEffect.createBlurEffect(blurRadiusX, blurRadiusY, Shader.TileMode.CLAMP);
+            // Create and apply the blur effect
+            RenderEffect blurEffect = RenderEffect.createBlurEffect(blurRadiusX, blurRadiusY, Shader.TileMode.CLAMP);
             imageView.setRenderEffect(blurEffect);
+
+            // Measure rendering time using Choreographer
+            Choreographer.getInstance().postFrameCallback(new Choreographer.FrameCallback() {
+                private long startTime = System.nanoTime();
+
+                @Override
+                public void doFrame(long frameTimeNanos) {
+                    long endTime = System.nanoTime();
+                    long duration = (endTime - startTime) / 1000; // Convert to microseconds
+                    TextView timeRender = findViewById(R.id.timeRender);
+                    timeRender.setText("Time Render: " + duration + " μs");
+                }
+            });
         }
-        long endTime = System.nanoTime();
-        long duration = (endTime - startTime)/1000;
-        TextView timeRender = findViewById(R.id.timeRender);
-        timeRender.setText("Time Render: " + duration + " μs");
     }
+
     private void applyGaussianBlurRS() {
-        long startTime = System.nanoTime();
-        // Initialize RenderScript
-        RenderScript mRS = RenderScript.create(this);
-
-        // Create input and output allocations
-        Allocation inAllocation = Allocation.createFromBitmap(mRS, mBitmapIn, Allocation.MipmapControl.MIPMAP_NONE, Allocation.USAGE_SCRIPT);
-        Allocation outAllocation = Allocation.createTyped(mRS, inAllocation.getType());
-
-        // Create an intrinsic blur script
-        ScriptIntrinsicBlur blurScript = ScriptIntrinsicBlur.create(mRS, Element.U8_4(mRS));
-        blurScript.setRadius(rsRadius); // Set desired blur radius
         blurScript.setInput(inAllocation);
+        long startTime = System.nanoTime();
         blurScript.forEach(outAllocation);
 
         // Copy the result to the output Bitmap
@@ -170,5 +171,28 @@ public class BlurActivity extends AppCompatActivity {
         // Destroy the RenderScript context to release resources
         mRS.destroy();
     }
+    private void benchmarkGLRendering() {
+        // Get the aspect ratio of the bitmap
+        float aspectRatio = (float) mBitmapIn.getWidth() / mBitmapIn.getHeight();
 
+        // Post the frame callback to measure the rendering time
+        Choreographer.getInstance().postFrameCallback(new Choreographer.FrameCallback() {
+            private long startTime = System.nanoTime();
+
+            @Override
+            public void doFrame(long frameTimeNanos) {
+                // This method is called when the frame starts being drawn
+                long endTime = System.nanoTime(); // Get the time when the frame starts rendering
+                long duration = (endTime - startTime) / 1000; // Convert to microseconds
+
+                // Update the UI with the rendering time
+                TextView timeViewGL = findViewById(R.id.timeGL);
+                timeViewGL.setText("Time GL: " + duration + " μs");
+            }
+        });
+
+        // Set the renderer and trigger the render request
+        glSurfaceView.setRenderer(new MyGLRenderer(this, mBitmapIn, 1, buffer, aspectRatio));
+        glSurfaceView.requestRender();
+    }
 }

@@ -3,31 +3,41 @@ package com.light.renderscripttest;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 
-import android.graphics.Bitmap;
-import android.graphics.Color;
 
-import android.graphics.Bitmap;
-import android.graphics.Color;
 
 public class GaussianBlur {
 
-    public static Bitmap applyGaussianBlur(Bitmap sentBitmap, int radius, float sigma) {
+    private float[] kernel;  // Store the kernel for reuse
+    private int radius;
+    private float sigma;
+
+    // Constructor to create the kernel
+    public GaussianBlur(int radius, float sigma) {
+        this.radius = radius;
+        this.sigma = sigma;
+        this.kernel = createGaussianKernel(radius, sigma);  // Precompute the kernel
+    }
+
+    // Apply Gaussian Blur with precomputed kernel
+    public Bitmap applyGaussianBlur(Bitmap sentBitmap) {
         int width = sentBitmap.getWidth();
         int height = sentBitmap.getHeight();
         Bitmap blurredBitmap = Bitmap.createBitmap(width, height, sentBitmap.getConfig());
 
-        // First pass: Horizontal blur
+        // Get all pixels at once
         int[] pixels = new int[width * height];
         sentBitmap.getPixels(pixels, 0, width, 0, 0, width, height);
+
         int[] horizontalBlurred = new int[width * height];
 
-        float[] kernel = createGaussianKernel(radius, sigma);
+        // First pass: Horizontal blur
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
                 float red = 0.0f;
                 float green = 0.0f;
                 float blue = 0.0f;
 
+                // Apply Gaussian kernel in the horizontal direction
                 for (int i = -radius; i <= radius; i++) {
                     int neighborX = x + i;
                     if (neighborX >= 0 && neighborX < width) {
@@ -53,6 +63,7 @@ public class GaussianBlur {
                 float green = 0.0f;
                 float blue = 0.0f;
 
+                // Apply Gaussian kernel in the vertical direction
                 for (int j = -radius; j <= radius; j++) {
                     int neighborY = y + j;
                     if (neighborY >= 0 && neighborY < height) {
@@ -74,8 +85,8 @@ public class GaussianBlur {
         return blurredBitmap;
     }
 
-
-    private static float[] createGaussianKernel(int radius, float sigma) {
+    // Create a Gaussian kernel for a given radius and sigma
+    private float[] createGaussianKernel(int radius, float sigma) {
         int kernelSize = radius * 2 + 1;
         float[] kernel = new float[kernelSize];
         float sum = 0.0f;

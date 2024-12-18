@@ -8,20 +8,17 @@ import android.opengl.GLSurfaceView;
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
-import android.content.Context;
-import android.opengl.GLES32;
 import android.opengl.GLUtils;
-import android.util.Log;
+import android.opengl.Matrix;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
-import java.nio.IntBuffer;
 
 public class MyGLRenderer implements GLSurfaceView.Renderer {
     private Context context;
     private int program, mode;
-    private float buffer;
+    private float buffer, aspectRatio;
     private int textureId;
     private Bitmap bitmap;  // The input image
     private FloatBuffer vertexBuffer, texCoordBuffer;
@@ -40,16 +37,18 @@ public class MyGLRenderer implements GLSurfaceView.Renderer {
             1.0f, 0.0f   // Top-right
     };
 
-    public MyGLRenderer(Context context, Bitmap bitmap, int mode) {
+    public MyGLRenderer(Context context, Bitmap bitmap, int mode, float aspectRatio) {
         this.context = context;
         this.bitmap = bitmap;
         this.mode = mode;
+        this.aspectRatio = aspectRatio;
     }
-    public MyGLRenderer(Context context, Bitmap bitmap, int mode, float buffer) {
+    public MyGLRenderer(Context context, Bitmap bitmap, int mode, float buffer, float aspectRatio) {
         this.context = context;
         this.bitmap = bitmap;
         this.mode = mode;
         this.buffer = buffer;
+        this.aspectRatio = aspectRatio;
     }
 
     private void setupBuffers() {
@@ -128,8 +127,20 @@ public class MyGLRenderer implements GLSurfaceView.Renderer {
 
     @Override
     public void onSurfaceChanged(GL10 gl, int width, int height) {
-        GLES32.glViewport(0, 0, width, height);
+        GLES32.glViewport(0, 0, width, height);  // Set the OpenGL viewport
+
+        // Calculate aspect ratio
+        float ratio = (float) width / height;
+
+        // Adjust projection matrix to maintain the aspect ratio
+        float[] projectionMatrix = new float[16];
+        Matrix.frustumM(projectionMatrix, 0, -ratio, ratio, -1.0f, 1.0f, 3.0f, 7.0f);
+
+        // Set the projection matrix to the shader
+        int projectionMatrixHandle = GLES32.glGetUniformLocation(program, "uProjectionMatrix");
+        GLES32.glUniformMatrix4fv(projectionMatrixHandle, 1, false, projectionMatrix, 0);
     }
+
 
     private int compileShader(int type, String shaderCode) {
         int shader = GLES32.glCreateShader(type);

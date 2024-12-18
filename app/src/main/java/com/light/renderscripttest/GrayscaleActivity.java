@@ -6,11 +6,9 @@ import android.graphics.BitmapFactory;
 import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
 import android.graphics.RenderEffect;
-import android.opengl.GLES32;
-import android.opengl.GLSurfaceView;
 import android.os.Build;
 import android.os.Bundle;
-import android.util.Log;
+import android.view.Choreographer;
 import android.widget.ImageView;
 import android.widget.TextView;
 
@@ -26,10 +24,15 @@ public class GrayscaleActivity extends AppCompatActivity {
     private ExecutorService executorService = Executors.newSingleThreadExecutor();
     private MyGLSurfaceView glSurfaceView;
     public long timeJava, timeRS, timeGL;
+    private RenderScript rs;
+    private Allocation inAllocation, outAllocation;
+    private ScriptC_grayscale script;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_grayscale);
+
         Intent intent = getIntent();
         int size = intent.getIntExtra("size", 256);
         switch (size) {
@@ -46,131 +49,143 @@ public class GrayscaleActivity extends AppCompatActivity {
                 mBitmapIn = loadBitmap(R.drawable.i1920x1080);
                 break;
         }
+
         int w = mBitmapIn.getWidth();
         int h = mBitmapIn.getHeight();
+        // Display input image
+        ImageView in = findViewById(R.id.inputImage);
+        in.setImageBitmap(mBitmapIn);
+
         mBitmapOutRS = Bitmap.createBitmap(w, h, mBitmapIn.getConfig());
         mBitmapOutJava = Bitmap.createBitmap(w, h, mBitmapIn.getConfig());
+
         TextView timeViewJava = findViewById(R.id.timeJava);
         TextView timeViewRS = findViewById(R.id.timeRS);
         glSurfaceView = findViewById(R.id.outputGL);
-        long startTime = System.nanoTime();
-        glSurfaceView.setRenderer(new MyGLRenderer(this, mBitmapIn, 0));
-        long endTime = System.nanoTime();
-        timeGL = (endTime - startTime)/1000;
-        TextView timeViewGL = findViewById(R.id.timeGL);
-        timeViewGL.setText("Time GL: " + timeGL + " μs");
-        ImageView in = findViewById(R.id.inputImage);
-        in.setImageBitmap(mBitmapIn);
+
+        rs = RenderScript.create(this);
+        inAllocation = Allocation.createFromBitmap(rs, mBitmapIn, Allocation.MipmapControl.MIPMAP_NONE, Allocation.USAGE_SCRIPT);
+        outAllocation = Allocation.createTyped(rs, inAllocation.getType());
+        script = new ScriptC_grayscale(rs);
+
+
+        // Benchmark GLSurfaceView rendering
+        benchmarkGLRendering();
+
+        // Apply RenderEffect
         ImageView render = findViewById(R.id.outputRender);
         render.setImageBitmap(mBitmapIn);
         applyGrayscaleEffect(render);
-        executorService.execute(new Runnable() {
-            @Override
-            public void run() {
-                // Apply Java grayscale
-                applyGrayscaleJava();
 
-                // Once done, call the UI update method to set the result
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        ImageView outputJava = findViewById(R.id.outputJava);
-                        outputJava.setImageBitmap(mBitmapOutJava);
-                        timeViewJava.setText("Time Java: " + timeJava + " μs");
-                    }
-                });
-            }
-        });
-        executorService.execute(new Runnable() {
-            @Override
-            public void run() {
-                // Apply RenderScript grayscale
-                applyGrayscaleRS();
-
-                // Once done, call the UI update method to set the result
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        ImageView outputRS = findViewById(R.id.outputRS);
-                        outputRS.setImageBitmap(mBitmapOutRS);
-                        timeViewRS.setText("Time RS: " + timeRS + " μs");
-                    }
-                });
-            }
+        // Benchmark Java grayscale
+        executorService.execute(() -> {
+            applyGrayscaleJava();
+            runOnUiThread(() -> {
+                ImageView outputJava = findViewById(R.id.outputJava);
+                outputJava.setImageBitmap(mBitmapOutJava);
+                timeViewJava.setText("Time Java: " + timeJava + " μs");
+            });
         });
 
+        // Benchmark RenderScript grayscale
+        executorService.execute(() -> {
+            applyGrayscaleRS();
+            runOnUiThread(() -> {
+                ImageView outputRS = findViewById(R.id.outputRS);
+                outputRS.setImageBitmap(mBitmapOutRS);
+                timeViewRS.setText("Time RS: " + timeRS + " μs");
+            });
+        });
     }
+
+    private void warmUp() {
+        applyGrayscaleJava();
+        applyGrayscaleRS();
+    }
+
     private Bitmap loadBitmap(int resource) {
         final BitmapFactory.Options options = new BitmapFactory.Options();
         options.inPreferredConfig = Bitmap.Config.ARGB_8888;
         return BitmapFactory.decodeResource(getResources(), resource, options);
     }
-    private void applyGrayscaleJava() {
-        long startTime = System.nanoTime();
 
+    private void applyGrayscaleJava() {
         int width = mBitmapIn.getWidth();
         int height = mBitmapIn.getHeight();
-
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                int pixel = mBitmapIn.getPixel(x, y);
-
-                int r = (pixel >> 16) & 0xFF;
-                int g = (pixel >> 8) & 0xFF;
-                int b = pixel & 0xFF;
-
-                int gray = (int) (0.299 * r + 0.587 * g + 0.114 * b);
-                int grayPixel = (0xFF << 24) | (gray << 16) | (gray << 8) | gray;
-
-                mBitmapOutJava.setPixel(x, y, grayPixel);
-            }
+        int[] pixels = new int[width * height];
+        long startTime = System.nanoTime();
+        mBitmapIn.getPixels(pixels, 0, width, 0, 0, width, height);
+        for (int i = 0; i < pixels.length; i++) {
+            int pixel = pixels[i];
+            int r = (pixel >> 16) & 0xFF;
+            int g = (pixel >> 8) & 0xFF;
+            int b = pixel & 0xFF;
+            int gray = (int) (0.299 * r + 0.587 * g + 0.114 * b);
+            pixels[i] = (0xFF << 24) | (gray << 16) | (gray << 8) | gray;
         }
+        mBitmapOutJava.setPixels(pixels, 0, width, 0, 0, width, height);
+
         long endTime = System.nanoTime();
-        timeJava = (endTime - startTime)/1000;
+        timeJava = (endTime - startTime) / 1000;
     }
 
     private void applyGrayscaleEffect(ImageView imageView) {
-        long startTime = System.nanoTime();
-
         ColorMatrix colorMatrix = new ColorMatrix();
-        colorMatrix.setSaturation(0); // Set saturation to 0 for grayscale
+        colorMatrix.setSaturation(0);
         ColorMatrixColorFilter colorFilter = new ColorMatrixColorFilter(colorMatrix);
 
-        RenderEffect grayscaleEffect = null;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            grayscaleEffect = RenderEffect.createColorFilterEffect(colorFilter);
+            RenderEffect grayscaleEffect = RenderEffect.createColorFilterEffect(colorFilter);
             imageView.setRenderEffect(grayscaleEffect);
-        }
 
-        long endTime = System.nanoTime();
-        long duration = (endTime - startTime)/1000;
-        TextView timeRender = findViewById(R.id.timeRender);
-        timeRender.setText("Time Render: " + duration + " μs");
+            // Measure time using Choreographer
+            Choreographer.getInstance().postFrameCallback(new Choreographer.FrameCallback() {
+                private long startTime = System.nanoTime();
+
+                @Override
+                public void doFrame(long frameTimeNanos) {
+                    long endTime = System.nanoTime();
+                    long duration = (endTime - startTime) / 1000; // Convert to microseconds
+                    TextView timeRender = findViewById(R.id.timeRender);
+                    timeRender.setText("Time Render: " + duration + " μs");
+                }
+            });
+        }
     }
+
 
     private void applyGrayscaleRS() {
-        // Initialize RenderScript
         long startTime = System.nanoTime();
-
-        RenderScript rs = RenderScript.create(this);
-
-        // Create input and output allocations
-        Allocation inAllocation = Allocation.createFromBitmap(rs, mBitmapIn, Allocation.MipmapControl.MIPMAP_NONE, Allocation.USAGE_SCRIPT);
-        Allocation outAllocation = Allocation.createTyped(rs, inAllocation.getType());
-
-        // Load the grayscale RenderScript
-        ScriptC_grayscale script = new ScriptC_grayscale(rs);
-
-        // Set input allocation in the script
         script.forEach_root(inAllocation, outAllocation);
-
-        // Copy the result to the output Bitmap
         outAllocation.copyTo(mBitmapOutRS);
-
         long endTime = System.nanoTime();
-        timeRS = (endTime - startTime)/1000;
 
-        // Destroy the RenderScript context to release resources
+        timeRS = (endTime - startTime) / 1000;
         rs.destroy();
     }
+    private void benchmarkGLRendering() {
+        // Get the aspect ratio of the bitmap
+        float aspectRatio = (float) mBitmapIn.getWidth() / mBitmapIn.getHeight();
+
+        // Post the frame callback to measure the rendering time
+        Choreographer.getInstance().postFrameCallback(new Choreographer.FrameCallback() {
+            private long startTime = System.nanoTime();
+
+            @Override
+            public void doFrame(long frameTimeNanos) {
+                // This method is called when the frame starts being drawn
+                long endTime = System.nanoTime(); // Get the time when the frame starts rendering
+                long duration = (endTime - startTime) / 1000; // Convert to microseconds
+
+                // Update the UI with the rendering time
+                TextView timeViewGL = findViewById(R.id.timeGL);
+                timeViewGL.setText("Time GL: " + duration + " μs");
+            }
+        });
+
+        // Set the renderer and trigger the render request
+        glSurfaceView.setRenderer(new MyGLRenderer(this, mBitmapIn, 0, aspectRatio));
+        glSurfaceView.requestRender();
+    }
+
 }

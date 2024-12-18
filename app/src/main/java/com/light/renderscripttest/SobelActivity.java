@@ -4,17 +4,12 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
-import android.opengl.GLSurfaceView;
 import android.os.Bundle;
-import android.util.Log;
+import android.view.Choreographer;
 import android.widget.ImageView;
 import android.widget.TextView;
 
-import androidx.activity.EdgeToEdge;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.graphics.Insets;
-import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowInsetsCompat;
 import androidx.renderscript.Allocation;
 import androidx.renderscript.RenderScript;
 import androidx.renderscript.Script;
@@ -27,6 +22,10 @@ public class SobelActivity extends AppCompatActivity {
     private ExecutorService executorService = Executors.newSingleThreadExecutor();
     private MyGLSurfaceView glSurfaceView;
     public long timeJava, timeRS, timeGL;
+    private RenderScript rs;
+    private Allocation inAllocation, outAllocation;
+    private ScriptC_sobel script;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -49,52 +48,46 @@ public class SobelActivity extends AppCompatActivity {
         }
         int w = mBitmapIn.getWidth();
         int h = mBitmapIn.getHeight();
+        ImageView in = findViewById(R.id.inputImage);
+        in.setImageBitmap(mBitmapIn);
         mBitmapOutRS = Bitmap.createBitmap(w, h, mBitmapIn.getConfig());
         mBitmapOutJava = Bitmap.createBitmap(w, h, mBitmapIn.getConfig());
+
         TextView timeViewJava = findViewById(R.id.timeJava);
         TextView timeViewRS = findViewById(R.id.timeRS);
         glSurfaceView = findViewById(R.id.outputGL);
-        long startTime = System.nanoTime();
-        glSurfaceView.setRenderer(new MyGLRenderer(this, mBitmapIn, 2));
-        long endTime = System.nanoTime();
-        timeGL = (endTime - startTime)/1000;
-        TextView timeViewGL = findViewById(R.id.timeGL);
-        timeViewGL.setText("Time GL: " + timeGL + " μs");
-        ImageView in = findViewById(R.id.inputImage);
-        in.setImageBitmap(mBitmapIn);
-        executorService.execute(new Runnable() {
-            @Override
-            public void run() {
-                // Apply Java grayscale
-                applySobelJava();
+        // Initialize RenderScript
+        rs = RenderScript.create(this);
 
-                // Once done, call the UI update method to set the result
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        ImageView outputJava = findViewById(R.id.outputJava);
-                        outputJava.setImageBitmap(mBitmapOutJava);
-                        timeViewJava.setText("Time Java: " + timeJava + " μs");
-                    }
-                });
-            }
+        // Create input and output allocations
+        inAllocation = Allocation.createFromBitmap(rs, mBitmapIn, Allocation.MipmapControl.MIPMAP_NONE, Allocation.USAGE_SCRIPT);
+        outAllocation = Allocation.createTyped(rs, inAllocation.getType());
+
+        // Load the Sobel RenderScript
+        script = new ScriptC_sobel(rs);
+
+
+        // Benchmark GLSurfaceView rendering
+        benchmarkGLRendering();
+
+        // Benchmark Java sobel
+        executorService.execute(() -> {
+            applySobelJava();
+            runOnUiThread(() -> {
+                ImageView outputJava = findViewById(R.id.outputJava);
+                outputJava.setImageBitmap(mBitmapOutJava);
+                timeViewJava.setText("Time Java: " + timeJava + " μs");
+            });
         });
-        executorService.execute(new Runnable() {
-            @Override
-            public void run() {
-                // Apply RenderScript grayscale
-                applySobelRS();
 
-                // Once done, call the UI update method to set the result
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        ImageView outputRS = findViewById(R.id.outputRS);
-                        outputRS.setImageBitmap(mBitmapOutRS);
-                        timeViewRS.setText("Time RS: " + timeRS + " μs");
-                    }
-                });
-            }
+        // Benchmark RenderScript sobel
+        executorService.execute(() -> {
+            applySobelRS();
+            runOnUiThread(() -> {
+                ImageView outputRS = findViewById(R.id.outputRS);
+                outputRS.setImageBitmap(mBitmapOutRS);
+                timeViewRS.setText("Time RS: " + timeRS + " μs");
+            });
         });
     }
     private Bitmap loadBitmap(int resource) {
@@ -102,8 +95,11 @@ public class SobelActivity extends AppCompatActivity {
         options.inPreferredConfig = Bitmap.Config.ARGB_8888;
         return BitmapFactory.decodeResource(getResources(), resource, options);
     }
+    private void warmUp() {
+        applySobelJava();
+        applySobelRS();
+    }
     private void applySobelJava() {
-        long startTime = System.nanoTime();
         int width = mBitmapIn.getWidth();
         int height = mBitmapIn.getHeight();
 
@@ -120,6 +116,15 @@ public class SobelActivity extends AppCompatActivity {
                 1, 2, 1
         };
 
+        // Create a pixel array to hold the input and output pixels
+        int[] pixelsIn = new int[width * height];
+        int[] pixelsOut = new int[width * height];
+
+        // Get all the input pixels at once
+        mBitmapIn.getPixels(pixelsIn, 0, width, 0, 0, width, height);
+
+        long startTime = System.nanoTime();
+
         for (int y = 1; y < height - 1; y++) {
             for (int x = 1; x < width - 1; x++) {
                 int gx = 0, gy = 0;
@@ -127,7 +132,8 @@ public class SobelActivity extends AppCompatActivity {
                 // Apply Sobel X and Sobel Y
                 for (int ky = -1; ky <= 1; ky++) {
                     for (int kx = -1; kx <= 1; kx++) {
-                        int pixel = mBitmapIn.getPixel(x + kx, y + ky);
+                        // Get the pixel color (grayscale) from the input array
+                        int pixel = pixelsIn[(y + ky) * width + (x + kx)];
                         int gray = (int) (0.299 * Color.red(pixel) + 0.587 * Color.green(pixel) + 0.114 * Color.blue(pixel));
 
                         gx += sobelX[(ky + 1) * 3 + (kx + 1)] * gray;
@@ -138,26 +144,20 @@ public class SobelActivity extends AppCompatActivity {
                 // Calculate the gradient magnitude
                 int magnitude = (int) Math.min(255, Math.sqrt(gx * gx + gy * gy));
 
-                // Set the edge pixel color (grayscale)
-                mBitmapOutJava.setPixel(x, y, Color.rgb(magnitude, magnitude, magnitude));
+                // Set the edge pixel color (grayscale) in the output array
+                pixelsOut[y * width + x] = Color.rgb(magnitude, magnitude, magnitude);
             }
         }
+
+        // Set the output pixels all at once
+        mBitmapOutJava.setPixels(pixelsOut, 0, width, 0, 0, width, height);
+
         long endTime = System.nanoTime();
-        timeJava = (endTime - startTime)/1000;
+        timeJava = (endTime - startTime) / 1000;
     }
 
+
     private void applySobelRS() {
-        long startTime = System.nanoTime();
-        // Initialize RenderScript
-        RenderScript rs = RenderScript.create(this);
-
-        // Create input and output allocations
-        Allocation inAllocation = Allocation.createFromBitmap(rs, mBitmapIn, Allocation.MipmapControl.MIPMAP_NONE, Allocation.USAGE_SCRIPT);
-        Allocation outAllocation = Allocation.createTyped(rs, inAllocation.getType());
-
-        // Load the Sobel RenderScript
-        ScriptC_sobel script = new ScriptC_sobel(rs);
-
         // Bind the input allocation to the script
         script.set_gIn(inAllocation);
         script.set_gOut(outAllocation);
@@ -166,6 +166,8 @@ public class SobelActivity extends AppCompatActivity {
         Script.LaunchOptions launchOptions = new Script.LaunchOptions();
         launchOptions.setX(0, inAllocation.getType().getX() - 1);
         launchOptions.setY(0, inAllocation.getType().getY() - 1);
+
+        long startTime = System.nanoTime();
 
         // Execute the Sobel operation
         script.forEach_root(outAllocation, launchOptions);
@@ -179,5 +181,29 @@ public class SobelActivity extends AppCompatActivity {
 
         // Destroy the RenderScript context to release resources
         rs.destroy();
+    }
+    private void benchmarkGLRendering() {
+        // Get the aspect ratio of the bitmap
+        float aspectRatio = (float) mBitmapIn.getWidth() / mBitmapIn.getHeight();
+
+        // Post the frame callback to measure the rendering time
+        Choreographer.getInstance().postFrameCallback(new Choreographer.FrameCallback() {
+            private long startTime = System.nanoTime();
+
+            @Override
+            public void doFrame(long frameTimeNanos) {
+                // This method is called when the frame starts being drawn
+                long endTime = System.nanoTime(); // Get the time when the frame starts rendering
+                long duration = (endTime - startTime) / 1000; // Convert to microseconds
+
+                // Update the UI with the rendering time
+                TextView timeViewGL = findViewById(R.id.timeGL);
+                timeViewGL.setText("Time GL: " + duration + " μs");
+            }
+        });
+
+        // Set the renderer and trigger the render request
+        glSurfaceView.setRenderer(new MyGLRenderer(this, mBitmapIn, 2, aspectRatio));
+        glSurfaceView.requestRender();
     }
 }
